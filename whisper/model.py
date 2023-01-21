@@ -81,6 +81,7 @@ class MultiHeadAttention(nn.Module):
             # for cross-attention, calculate keys and values once and reuse in subsequent calls.
             k = kv_cache[self.key]
             v = kv_cache[self.value]
+            print('cache', k.shape, v.shape, id(k), id(v))
 
         wv, qk = self.qkv_attention(q, k, v, mask)
         return self.out(wv), qk
@@ -183,6 +184,7 @@ class TextDecoder(nn.Module):
             the encoded audio features to be attended on
         """
         offset = next(iter(kv_cache.values())).shape[1] if kv_cache else 0
+        print(offset, x.shape[-1], kv_cache[list(kv_cache.keys())[0]].shape if kv_cache else None)
         x = self.token_embedding(x) + self.positional_embedding[offset : offset + x.shape[-1]]
         x = x.to(xa.dtype)
 
