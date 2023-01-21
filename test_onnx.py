@@ -44,3 +44,9 @@ decoder_io_binding.bind_output('out_n_layer_self_k_cache')
 decoder_io_binding.bind_output('out_n_layer_self_v_cache')
 
 decoder_session.run_with_iobinding(decoder_io_binding)
+
+logits, n_layer_self_k_cache, n_layer_self_k_cache = decoder_io_binding.get_outputs()
+
+print(logits.numpy().shape)
+print(n_layer_self_k_cache.numpy().shape)
+print(n_layer_self_k_cache.numpy().shape)
