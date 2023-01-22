@@ -77,11 +77,12 @@ class MultiHeadAttention(nn.Module):
             # otherwise, perform key/value projections for self- or cross-attention as usual.
             k = self.key(x if xa is None else xa)
             v = self.value(x if xa is None else xa)
+            #print('k.shape', k.shape)
         else:
             # for cross-attention, calculate keys and values once and reuse in subsequent calls.
             k = kv_cache[self.key]
             v = kv_cache[self.value]
-            print('cache', k.shape, v.shape, id(k), id(v))
+            #print('cache', k.shape, v.shape, id(k), id(v))
 
         wv, qk = self.qkv_attention(q, k, v, mask)
         return self.out(wv), qk

@@ -54,11 +54,11 @@ class MultiHeadAttentionSelf(nn.Module):
         k = self.multiHeadAttention.key(x)   #(b, n_ctx, n_state)
         v = self.multiHeadAttention.value(x) #(b, n_ctx, n_state)
 
-        k = torch.cat((k_cache, k), 1) #(b, n_ctx_cache + n_ctx, n_state)
-        v = torch.cat((v_cache, v), 1) #(b, n_ctx_cache + n_ctx, n_state)
+        k_cache[:,-k.shape[1]:,:] = k #(b, n_ctx_cache + n_ctx, n_state)
+        v_cache[:,-v.shape[1]:,:] = v #(b, n_ctx_cache + n_ctx, n_state)
         
-        wv, qk = self.multiHeadAttention.qkv_attention(q, k, v, mask)
-        return self.multiHeadAttention.out(wv), k, v
+        wv, qk = self.multiHeadAttention.qkv_attention(q, k_cache, v_cache, mask)
+        return self.multiHeadAttention.out(wv), k_cache, v_cache
 
 
 class ResidualAttentionBlockTensorCache(nn.Module):
@@ -96,32 +96,29 @@ class TextDecoderTensorCache(nn.Module):
         for orginal_block in self.textDecoder.blocks:
             self.blocks.append(ResidualAttentionBlockTensorCache(orginal_block))
 
-    def forward(self, x: Tensor,
+    def forward(self, tokens: Tensor,
                 n_layer_self_k_cache: Tensor,
                 n_layer_self_v_cache: Tensor,
                 n_layer_cross_k: Tensor,
                 n_layer_cross_v: Tensor,
                 offset: Tensor,
                 ):
-        x = self.textDecoder.token_embedding(x) + self.textDecoder.positional_embedding[offset[0] : offset[0] + x.shape[-1]]
+        x = self.textDecoder.token_embedding(tokens) + self.textDecoder.positional_embedding[offset[0] : offset[0] + tokens.shape[-1]]
         x = x.to(n_layer_cross_k[0].dtype)
 
         i = 0
-        self_k_cache_list = []
-        self_v_cache_list = []
         for block in self.blocks:
-            x, self_k_cache, self_v_cache = block(x, 
-                                                self_k_cache = n_layer_self_k_cache[i],
-                                                self_v_cache = n_layer_self_v_cache[i],
-                                                cross_k = n_layer_cross_k[i],
-                                                cross_v = n_layer_cross_v[i],
-                                                mask=self.textDecoder.mask)
-            self_k_cache_list.append(self_k_cache)
-            self_v_cache_list.append(self_v_cache)
+            self_k_cache = n_layer_self_k_cache[i,:,:offset[0] + tokens.shape[-1],:]
+            self_v_cache = n_layer_self_v_cache[i,:,:offset[0] + tokens.shape[-1],:]
+            x, self_k_cache, self_v_cache = block(x,
+                                                  self_k_cache = self_k_cache,
+                                                  self_v_cache = self_v_cache,
+                                                  cross_k = n_layer_cross_k[i],
+                                                  cross_v = n_layer_cross_v[i],
+                                                  mask=self.textDecoder.mask)
+            n_layer_self_k_cache[i,:,:offset[0] + tokens.shape[-1],:] = self_k_cache
+            n_layer_self_v_cache[i,:,:offset[0] + tokens.shape[-1],:] = self_v_cache
             i += 1
-
-        n_layer_self_k_cache = torch.stack(self_k_cache_list)
-        n_layer_self_v_cache = torch.stack(self_v_cache_list)
 
         x = self.textDecoder.ln(x)
 
@@ -136,26 +133,35 @@ audio = whisper.load_audio(r"R:a.wav")
 audio = whisper.pad_or_trim(audio)
 
 # make log-Mel spectrogram and move to the same device as the model
-mel = whisper.log_mel_spectrogram(audio).to(model.device)
+mel = whisper.log_mel_spectrogram(audio).to(model.device).unsqueeze(0)
 
 encoder = AudioEncoderTensorCache(model.encoder, model.decoder)
 torch.onnx.export(
     encoder,
-    mel.unsqueeze(0),
+    mel,
     "encoder.onnx",
     verbose=True,
     input_names=['mel'],
     output_names=['n_layer_cross_k', 'n_layer_cross_v'])
 
-n_layer_cross_k, n_layer_cross_v = encoder(mel.unsqueeze(0))
+n_layer_cross_k, n_layer_cross_v = encoder(mel)
 tokenizer = whisper.tokenizer.get_tokenizer(model.is_multilingual)
 n_audio = mel.shape[0]
-tokens = torch.tensor([[tokenizer.sot]] * n_audio).to(mel.device)  # [n_audio, 1]
+tokens = torch.tensor([[tokenizer.sot, tokenizer.sot, tokenizer.sot]] * n_audio).to(mel.device)  # [n_audio, 3]
 
 decoder = TextDecoderTensorCache(model.decoder, model.dims.n_text_ctx)
-n_layer_self_k_cache = torch.zeros((len(model.decoder.blocks), model.dims.n_mels, 0, model.dims.n_text_state)).to(mel.device)
-n_layer_self_v_cache = torch.zeros((len(model.decoder.blocks), model.dims.n_mels, 0, model.dims.n_text_state)).to(mel.device)
+# cacheは固定長
+n_layer_self_k_cache = torch.zeros((len(model.decoder.blocks), n_audio, model.dims.n_text_ctx, model.dims.n_text_state), device=mel.device)
+n_layer_self_v_cache = torch.zeros((len(model.decoder.blocks), n_audio, model.dims.n_text_ctx, model.dims.n_text_state), device=mel.device)
 offset = torch.zeros(1, dtype=torch.int64).to(mel.device)
+
+logits, n_layer_self_k_cache, n_layer_self_v_cache = decoder(tokens, n_layer_self_k_cache, n_layer_self_v_cache, n_layer_cross_k, n_layer_cross_v, offset)
+
+offset = torch.tensor([tokens.shape[1]], dtype=torch.int64).to(mel.device)
+tokens = torch.tensor([[tokenizer.sot]] * n_audio).to(mel.device)  # [n_audio, 1]
+
+logits, out_n_layer_self_k_cache, out_n_layer_self_v_cache = decoder(tokens, n_layer_self_k_cache, n_layer_self_v_cache, n_layer_cross_k, n_layer_cross_v, offset)
+
 torch.onnx.export(
     decoder,
     (tokens, n_layer_self_k_cache, n_layer_self_v_cache, n_layer_cross_k, n_layer_cross_v, offset),
@@ -164,7 +170,7 @@ torch.onnx.export(
     input_names=['tokens', 'in_n_layer_self_k_cache', 'in_n_layer_self_v_cache', 'n_layer_cross_k', 'n_layer_cross_v', 'offset'],
     output_names=['logits', 'out_n_layer_self_k_cache', 'out_n_layer_self_v_cache'],
     dynamic_axes={
-                'tokens' : {1 : 'n_tokens'},
-                'in_n_layer_self_k_cache' : {2 : 'n_tokens'},
-                'in_n_layer_self_v_cache' : {2 : 'n_tokens'},
+                'tokens' : { 0: 'n_audio', 1 : 'n_tokens' },
+                'in_n_layer_self_k_cache' : { 1: 'n_audio' },
+                'in_n_layer_self_v_cache' : { 1: 'n_audio' },
                 })
