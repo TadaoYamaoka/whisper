@@ -129,7 +129,7 @@ class TextDecoderTensorCache(nn.Module):
 
 model = whisper.load_model("base")
 
-audio = whisper.load_audio(r"R:a.wav")
+audio = whisper.load_audio(r"D:\src\WhisperTest\a.wav")
 audio = whisper.pad_or_trim(audio)
 
 # make log-Mel spectrogram and move to the same device as the model
