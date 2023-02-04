@@ -31,7 +31,7 @@ print(n_layer_cross_v.shape)
 
 tokenizer = whisper.tokenizer.get_tokenizer(model.is_multilingual)
 n_audio = mel.shape[0]
-tokens = np.array([[tokenizer.sot, tokenizer.sot, tokenizer.sot]] * n_audio, np.float32)  # [n_audio, 3]
+tokens = np.array([[tokenizer.sot, tokenizer.sot, tokenizer.sot]] * n_audio, np.int64)  # [n_audio, 3]
 n_layer_self_k_cache = np.empty((len(model.decoder.blocks), n_audio, model.dims.n_text_ctx, model.dims.n_text_state), np.float32)
 n_layer_self_v_cache = np.empty((len(model.decoder.blocks), n_audio, model.dims.n_text_ctx, model.dims.n_text_state), np.float32)
 offset = np.zeros(1, dtype=np.int64)
@@ -56,7 +56,7 @@ print(n_layer_self_k_cache.shape)
 print(n_layer_self_v_cache.shape)
 
 offset = np.array([tokens.shape[1]], dtype=np.int64)
-tokens = np.array([[tokenizer.sot]] * n_audio, np.float32)  # [n_audio, 1]
+tokens = np.array([[tokenizer.sot]] * n_audio, np.int64)  # [n_audio, 1]
 time_start = time.time()
 output_decoder = model_decoder([tokens, n_layer_self_k_cache, n_layer_self_v_cache, n_layer_cross_k, n_layer_cross_v, offset])
 
