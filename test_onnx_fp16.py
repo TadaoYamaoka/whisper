@@ -12,9 +12,9 @@ audio = whisper.load_audio(r"../WhisperTest/a.wav")
 audio = whisper.pad_or_trim(audio)
 
 # make log-Mel spectrogram and move to the same device as the model
-mel = whisper.log_mel_spectrogram(audio).unsqueeze(0)
+mel = whisper.log_mel_spectrogram(audio).unsqueeze(0).half()
 
-encoder_session = onnxruntime.InferenceSession('encoder.int8.onnx', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'] if device == 'cuda' else ['CPUExecutionProvider'])
+encoder_session = onnxruntime.InferenceSession('encoder.fp16.onnx', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'] if device == 'cuda' else ['CPUExecutionProvider'])
 
 time_start = time.time()
 encoder_io_binding = encoder_session.io_binding()
@@ -34,11 +34,11 @@ print(n_layer_cross_v.shape())
 tokenizer = whisper.tokenizer.get_tokenizer(model.is_multilingual)
 n_audio = mel.shape[0]
 tokens = torch.tensor([[tokenizer.sot, tokenizer.sot, tokenizer.sot]] * n_audio)  # [n_audio, 3]
-n_layer_self_k_cache = onnxruntime.OrtValue.ortvalue_from_shape_and_type((len(model.decoder.blocks), n_audio, model.dims.n_text_ctx, model.dims.n_text_state), element_type=np.float32, device_type=device, device_id=0)
-n_layer_self_v_cache = onnxruntime.OrtValue.ortvalue_from_shape_and_type((len(model.decoder.blocks), n_audio, model.dims.n_text_ctx, model.dims.n_text_state), element_type=np.float32, device_type=device, device_id=0)
+n_layer_self_k_cache = onnxruntime.OrtValue.ortvalue_from_shape_and_type((len(model.decoder.blocks), n_audio, model.dims.n_text_ctx, model.dims.n_text_state), element_type=np.float16, device_type=device, device_id=0)
+n_layer_self_v_cache = onnxruntime.OrtValue.ortvalue_from_shape_and_type((len(model.decoder.blocks), n_audio, model.dims.n_text_ctx, model.dims.n_text_state), element_type=np.float16, device_type=device, device_id=0)
 offset = np.zeros(1, dtype=np.int64)
 
-decoder_session = onnxruntime.InferenceSession('decoder.int8.onnx', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'] if device == 'cuda' else ['CPUExecutionProvider'])
+decoder_session = onnxruntime.InferenceSession('decoder.fp16.onnx', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'] if device == 'cuda' else ['CPUExecutionProvider'])
 
 time_start = time.time()
 decoder_io_binding = decoder_session.io_binding()
